@@ -155,6 +155,33 @@
       cursor: pointer;
     }
 
+    .swatch-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 38px;
+      padding: 0 6px;
+      border: 1px solid rgba(38, 56, 79, 0.14);
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .color-swatch {
+      width: 24px;
+      min-width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 50%;
+      background: var(--swatch-color);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+    }
+
+    .color-swatch.active {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18), 0 0 0 2px rgba(15, 139, 141, 0.18);
+    }
+
     .width-control {
       display: flex;
       align-items: center;
@@ -251,6 +278,13 @@
 
       <div class="tool-group" aria-label="筆觸設定">
         <input class="color-control" id="colorPicker" type="color" value="#172033" title="顏色" aria-label="顏色">
+        <div class="swatch-row" aria-label="快速顏色">
+          <button class="color-swatch active" type="button" data-color="#172033" style="--swatch-color: #172033" title="黑色" aria-label="黑色"></button>
+          <button class="color-swatch" type="button" data-color="#1d4ed8" style="--swatch-color: #1d4ed8" title="藍色" aria-label="藍色"></button>
+          <button class="color-swatch" type="button" data-color="#dc2626" style="--swatch-color: #dc2626" title="紅色" aria-label="紅色"></button>
+          <button class="color-swatch" type="button" data-color="#15803d" style="--swatch-color: #15803d" title="綠色" aria-label="綠色"></button>
+          <button class="color-swatch" type="button" data-color="#7e22ce" style="--swatch-color: #7e22ce" title="紫色" aria-label="紫色"></button>
+        </div>
         <label class="width-control" title="粗細">
           粗細
           <input id="widthSlider" type="range" min="1" max="60" value="4" aria-label="粗細">
@@ -570,6 +604,13 @@
       }
     }
 
+    function updateActiveSwatch() {
+      const selectedColor = colorPicker.value.toLowerCase();
+      for (const swatch of toolbar.querySelectorAll("[data-color]")) {
+        swatch.classList.toggle("active", swatch.dataset.color.toLowerCase() === selectedColor);
+      }
+    }
+
     function distance(a, b) {
       return Math.hypot(a.x - b.x, a.y - b.y);
     }
@@ -836,7 +877,15 @@
       if (button) {
         setTool(button.dataset.tool);
       }
+
+      const swatch = event.target.closest("[data-color]");
+      if (swatch) {
+        colorPicker.value = swatch.dataset.color;
+        updateActiveSwatch();
+      }
     });
+
+    colorPicker.addEventListener("input", updateActiveSwatch);
 
     widthSlider.addEventListener("input", () => {
       widthValue.textContent = widthSlider.value + "px";
@@ -999,6 +1048,7 @@
 
     resizeCanvas();
     setTool(activeTool);
+    updateActiveSwatch();
   </script>
 </body>
 </html>
