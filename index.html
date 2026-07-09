@@ -256,6 +256,7 @@
           <input id="widthSlider" type="range" min="1" max="60" value="4" aria-label="粗細">
           <span id="widthValue">4px</span>
         </label>
+        <button class="icon-button active" id="smoothToggleBtn" type="button" title="筆跡平滑" aria-label="筆跡平滑" aria-pressed="true">≈</button>
       </div>
 
       <div class="tool-group" aria-label="白板操作">
@@ -282,6 +283,7 @@
     const colorPicker = document.getElementById("colorPicker");
     const widthSlider = document.getElementById("widthSlider");
     const widthValue = document.getElementById("widthValue");
+    const smoothToggleBtn = document.getElementById("smoothToggleBtn");
     const zoomLabel = document.getElementById("zoomLabel");
     const clearBtn = document.getElementById("clearBtn");
     const resetViewBtn = document.getElementById("resetViewBtn");
@@ -307,6 +309,7 @@
     let undoStack = [];
     let redoStack = [];
     let activeTool = "pen";
+    let smoothStrokes = true;
     let activePointers = new Map();
     let drawingPointerId = null;
     let currentStroke = null;
@@ -481,6 +484,17 @@
 
       if (stroke.points.length === 1) {
         targetCtx.lineTo(first.x + 0.01, first.y + 0.01);
+      } else if (smoothStrokes && stroke.points.length > 2) {
+        for (let i = 1; i < stroke.points.length - 1; i += 1) {
+          const current = worldToScreen(stroke.points[i].x, stroke.points[i].y);
+          const next = worldToScreen(stroke.points[i + 1].x, stroke.points[i + 1].y);
+          const midX = (current.x + next.x) / 2;
+          const midY = (current.y + next.y) / 2;
+          targetCtx.quadraticCurveTo(current.x, current.y, midX, midY);
+        }
+
+        const last = worldToScreen(stroke.points[stroke.points.length - 1].x, stroke.points[stroke.points.length - 1].y);
+        targetCtx.lineTo(last.x, last.y);
       } else {
         for (let i = 1; i < stroke.points.length; i += 1) {
           const point = worldToScreen(stroke.points[i].x, stroke.points[i].y);
@@ -540,6 +554,7 @@
       clearCanvas();
       drawGrid();
       drawAllStrokes();
+      drawStroke(ctx, currentStroke);
       drawPreviewShape();
       updateZoomLabel();
     }
@@ -825,6 +840,14 @@
 
     widthSlider.addEventListener("input", () => {
       widthValue.textContent = widthSlider.value + "px";
+    });
+
+    smoothToggleBtn.addEventListener("click", () => {
+      smoothStrokes = !smoothStrokes;
+      smoothToggleBtn.classList.toggle("active", smoothStrokes);
+      smoothToggleBtn.setAttribute("aria-pressed", String(smoothStrokes));
+      redraw();
+      showStatus(smoothStrokes ? "筆跡平滑已開啟。" : "筆跡平滑已關閉。");
     });
 
     clearBtn.addEventListener("click", () => {
