@@ -383,6 +383,8 @@
     let pinchState = null;
     let statusTimer = 0;
     let autosaveTimer = 0;
+    let redrawQueued = false;
+    let layerDirty = true;
     let layerCanvas = document.createElement("canvas");
     let layerCtx = layerCanvas.getContext("2d");
 
@@ -442,6 +444,20 @@
       redraw();
     }
 
+    function markLayerDirty() {
+      layerDirty = true;
+    }
+
+    function requestRedraw() {
+      if (redrawQueued) return;
+
+      redrawQueued = true;
+      requestAnimationFrame(() => {
+        redrawQueued = false;
+        redraw();
+      });
+    }
+
     function resizeLayer() {
       const dpr = window.devicePixelRatio || 1;
       const width = Math.max(1, cssWidth());
@@ -450,6 +466,7 @@
       if (layerCanvas.width !== Math.round(width * dpr) || layerCanvas.height !== Math.round(height * dpr)) {
         layerCanvas.width = Math.round(width * dpr);
         layerCanvas.height = Math.round(height * dpr);
+        markLayerDirty();
       }
       layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
@@ -506,13 +523,18 @@
 
     function drawAllStrokes() {
       resizeLayer();
-      layerCtx.save();
-      layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-      layerCtx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
-      layerCtx.restore();
 
-      for (const stroke of strokes) {
-        drawStroke(layerCtx, stroke);
+      if (layerDirty) {
+        layerCtx.save();
+        layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+        layerCtx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+        layerCtx.restore();
+
+        for (const stroke of strokes) {
+          drawStroke(layerCtx, stroke);
+        }
+
+        layerDirty = false;
       }
 
       ctx.drawImage(layerCanvas, 0, 0, cssWidth(), cssHeight());
@@ -720,6 +742,7 @@
 
         updateUndoButton();
         updateActiveSwatch();
+        markLayerDirty();
       } catch (error) {
         console.warn("自動儲存資料格式錯誤，已忽略。", error);
       }
@@ -736,14 +759,16 @@
 
       viewport.x += before.x - after.x;
       viewport.y += before.y - after.y;
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
     }
 
     function panBy(deltaX, deltaY) {
       viewport.x -= deltaX / viewport.zoom;
       viewport.y -= deltaY / viewport.zoom;
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
     }
 
@@ -777,6 +802,7 @@
       }
 
       strokes.push(stroke);
+      markLayerDirty();
       pushUndoAction({
         type: "add",
         stroke
@@ -803,7 +829,8 @@
 
       redoStack.push(action);
       cancelDrawing();
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       updateUndoButton();
       scheduleAutosave();
       showStatus("已返回上一步。");
@@ -827,7 +854,8 @@
         stroke: hit.stroke,
         index: hit.index
       });
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
       return true;
     }
@@ -976,7 +1004,7 @@
           width: Number(widthSlider.value),
           points: [world]
         };
-        redraw();
+        requestRedraw();
         return;
       }
 
@@ -989,33 +1017,41 @@
           start: world,
           end: world
         };
-        redraw();
+        requestRedraw();
       }
     }
 
     function continueDrawing(event) {
+      const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [event];
+
+      for (const sample of samples) {
+        continueDrawingPoint(sample, event.pointerId);
+      }
+    }
+
+    function continueDrawingPoint(event, pointerId) {
       const point = getCanvasPoint(event);
       const world = screenToWorld(point.x, point.y);
 
-      if (activeTool === "strokeEraser" && strokeErasePointerId === event.pointerId) {
+      if (activeTool === "strokeEraser" && strokeErasePointerId === pointerId) {
         eraseStrokeAt(world);
         return;
       }
 
-      if (drawingPointerId !== event.pointerId) return;
+      if (drawingPointerId !== pointerId) return;
 
       if (currentStroke) {
         const last = currentStroke.points[currentStroke.points.length - 1];
         if (distance(last, world) >= MIN_POINT_DISTANCE / viewport.zoom) {
           currentStroke.points.push(world);
-          redraw();
+          requestRedraw();
         }
         return;
       }
 
       if (previewShape) {
         previewShape.end = world;
-        redraw();
+        requestRedraw();
       }
     }
 
@@ -1036,7 +1072,8 @@
       }
 
       cancelDrawing();
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
     }
 
@@ -1234,7 +1271,8 @@
       smoothStrokes = !smoothStrokes;
       smoothToggleBtn.classList.toggle("active", smoothStrokes);
       smoothToggleBtn.setAttribute("aria-pressed", String(smoothStrokes));
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
       showStatus(smoothStrokes ? "筆跡平滑已開啟。" : "筆跡平滑已關閉。");
     });
@@ -1252,7 +1290,8 @@
         strokes = [];
         redoStack = [];
         cancelDrawing();
-        redraw();
+        markLayerDirty();
+        requestRedraw();
         scheduleAutosave();
         showStatus("白板已清除。");
       }
@@ -1262,7 +1301,8 @@
       viewport.x = 0;
       viewport.y = 0;
       viewport.zoom = 1;
-      redraw();
+      markLayerDirty();
+      requestRedraw();
       scheduleAutosave();
       showStatus("已回到白板中心。");
     });
@@ -1375,7 +1415,9 @@
       }
 
       cancelDrawing();
-      redraw();
+      markLayerDirty();
+      requestRedraw();
+      scheduleAutosave();
     }
 
     function isValidPoint(point) {
