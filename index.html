@@ -279,6 +279,7 @@
         <button class="icon-button active" type="button" data-tool="pen" title="筆刷" aria-label="筆刷">✎</button>
         <button class="icon-button" type="button" data-tool="eraser" title="橡皮擦" aria-label="橡皮擦">⌫</button>
         <button class="icon-button" type="button" data-tool="strokeEraser" title="筆畫橡皮擦" aria-label="筆畫橡皮擦">⌧</button>
+        <button class="icon-button" type="button" data-tool="pan" title="平移" aria-label="平移">↔</button>
         <button class="icon-button" type="button" data-tool="line" title="直線" aria-label="直線">╱</button>
         <button class="icon-button" type="button" data-tool="rect" title="長方形" aria-label="長方形">□</button>
         <button class="icon-button" type="button" data-tool="circle" title="圓形" aria-label="圓形">○</button>
@@ -616,6 +617,11 @@
       for (const button of toolbar.querySelectorAll("[data-tool]")) {
         button.classList.toggle("active", button.dataset.tool === tool);
       }
+      updatePanCursor();
+    }
+
+    function updatePanCursor() {
+      canvas.classList.toggle("panning", activeTool === "pan" || isSpacePressed);
     }
 
     function updateActiveSwatch() {
@@ -1030,7 +1036,7 @@
         return;
       }
 
-      if (event.button === 1 || isSpacePressed) {
+      if (event.button === 1 || event.button === 2 || isSpacePressed || activeTool === "pan") {
         beginPan(event);
       } else {
         beginDrawing(event);
@@ -1183,14 +1189,14 @@
       if (event.code === "Space" && !isEditingTextInput(event.target)) {
         event.preventDefault();
         isSpacePressed = true;
-        canvas.classList.add("panning");
+        updatePanCursor();
       }
     });
 
     window.addEventListener("keyup", (event) => {
       if (event.code === "Space") {
         isSpacePressed = false;
-        canvas.classList.remove("panning");
+        updatePanCursor();
       }
     });
 
