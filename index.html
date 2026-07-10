@@ -213,29 +213,6 @@
       white-space: nowrap;
     }
 
-    .note-size-control {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      height: 38px;
-      padding: 0 8px;
-      border: 1px solid rgba(38, 56, 79, 0.14);
-      border-radius: 7px;
-      background: #fff;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-
-    .note-size-control input {
-      width: 62px;
-      height: 28px;
-      border: 1px solid rgba(38, 56, 79, 0.14);
-      border-radius: 6px;
-      color: var(--ink);
-      text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
-
     .width-control input {
       width: 108px;
       accent-color: var(--accent);
@@ -284,6 +261,23 @@
       transform: translate(-50%, 0);
     }
 
+    #stickyEditor {
+      position: fixed;
+      z-index: 9;
+      display: none;
+      min-width: 56px;
+      min-height: 44px;
+      padding: 8px;
+      border: 0;
+      border-radius: 6px;
+      outline: 2px solid rgba(15, 139, 141, 0.42);
+      background: rgba(255, 255, 255, 0.24);
+      color: #172033;
+      font: 15px/1.35 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      resize: none;
+      box-shadow: inset 0 0 0 1px rgba(23, 32, 51, 0.08);
+    }
+
     @media (max-width: 720px) {
       #toolbar {
         top: auto;
@@ -295,10 +289,6 @@
 
       .width-control input {
         width: 92px;
-      }
-
-      .note-size-control input {
-        width: 54px;
       }
 
       #status {
@@ -322,7 +312,6 @@
         <button class="icon-button" type="button" data-tool="rect" title="長方形" aria-label="長方形">□</button>
         <button class="icon-button" type="button" data-tool="circle" title="圓形" aria-label="圓形">○</button>
         <button class="icon-button" type="button" data-tool="ellipse" title="橢圓形" aria-label="橢圓形">◯</button>
-        <button class="icon-button" type="button" data-tool="sticky" title="便條貼" aria-label="便條貼">▣</button>
       </div>
 
       <div class="tool-group" aria-label="筆觸設定">
@@ -340,15 +329,10 @@
           <span id="widthValue">4px</span>
         </label>
         <button class="icon-button active" id="smoothToggleBtn" type="button" title="筆跡平滑" aria-label="筆跡平滑" aria-pressed="true">≈</button>
-        <label class="note-size-control" title="便條貼大小">
-          便條
-          <input id="stickyWidthInput" type="number" min="60" max="800" step="10" value="180" aria-label="便條貼寬度">
-          ×
-          <input id="stickyHeightInput" type="number" min="60" max="800" step="10" value="140" aria-label="便條貼高度">
-        </label>
       </div>
 
       <div class="tool-group" aria-label="白板操作">
+        <button id="addStickyBtn" type="button" title="加入便條" aria-label="加入便條">＋便條</button>
         <button class="icon-button" id="undoBtn" type="button" title="返回上一步" aria-label="返回上一步" disabled>↶</button>
         <button class="icon-button danger" id="deleteSelectedBtn" type="button" title="刪除所選" aria-label="刪除所選" disabled>⌦</button>
         <button class="icon-button danger" id="clearBtn" type="button" title="清除白板" aria-label="清除白板">×</button>
@@ -364,6 +348,7 @@
     </div>
 
     <div id="status" role="status" aria-live="polite"></div>
+    <textarea id="stickyEditor" aria-label="便條內容"></textarea>
     <input type="file" id="importJsonInput" accept="application/json" hidden>
   </main>
 
@@ -374,10 +359,9 @@
     const colorPicker = document.getElementById("colorPicker");
     const widthSlider = document.getElementById("widthSlider");
     const widthValue = document.getElementById("widthValue");
-    const stickyWidthInput = document.getElementById("stickyWidthInput");
-    const stickyHeightInput = document.getElementById("stickyHeightInput");
     const smoothToggleBtn = document.getElementById("smoothToggleBtn");
     const zoomLabel = document.getElementById("zoomLabel");
+    const addStickyBtn = document.getElementById("addStickyBtn");
     const undoBtn = document.getElementById("undoBtn");
     const deleteSelectedBtn = document.getElementById("deleteSelectedBtn");
     const clearBtn = document.getElementById("clearBtn");
@@ -387,14 +371,19 @@
     const importJsonBtn = document.getElementById("importJsonBtn");
     const importJsonInput = document.getElementById("importJsonInput");
     const statusBox = document.getElementById("status");
+    const stickyEditor = document.getElementById("stickyEditor");
 
     const MIN_ZOOM = 0.1;
     const MAX_ZOOM = 5;
     const GRID_SIZE = 50;
     const MIN_POINT_DISTANCE = 1.5;
     const STROKE_ERASER_TOLERANCE = 8;
+    const DEFAULT_STICKY_SIZE = 100;
     const MIN_STICKY_SIZE = 60;
     const MAX_STICKY_SIZE = 800;
+    const STICKY_CONTROL_SIZE = 22;
+    const STICKY_CONTROL_GAP = 4;
+    const STICKY_RESIZE_HANDLE_SIZE = 16;
     const AUTOSAVE_KEY = "infinite-whiteboard.autosave.v1";
     const AUTOSAVE_DELAY = 250;
     const PINCH_ZOOM_DEADZONE = 0.015;
@@ -419,6 +408,13 @@
     let selectionStartWorld = null;
     let selectionOriginalStroke = null;
     let selectionMoved = false;
+    let stickyResizePointerId = null;
+    let stickyResizeNoteId = null;
+    let stickyResizeStartWorld = null;
+    let stickyResizeOriginalNote = null;
+    let stickyResizeChanged = false;
+    let editingStickyId = null;
+    let editingStickyOriginal = null;
     let erasedStrokeIds = new Set();
     let currentStroke = null;
     let previewShape = null;
@@ -683,7 +679,6 @@
       const width = Math.max(1, note.noteWidth * viewport.zoom);
       const height = Math.max(1, note.noteHeight * viewport.zoom);
       const radius = Math.min(8, Math.max(3, 6 * viewport.zoom));
-      const foldSize = Math.min(width, height, Math.max(12, 22 * viewport.zoom));
 
       targetCtx.save();
       targetCtx.globalCompositeOperation = "source-over";
@@ -705,31 +700,168 @@
       targetCtx.shadowColor = "transparent";
       targetCtx.stroke();
 
-      targetCtx.fillStyle = "rgba(255, 255, 255, 0.28)";
-      targetCtx.beginPath();
-      targetCtx.moveTo(topLeft.x + width - foldSize, topLeft.y);
-      targetCtx.lineTo(topLeft.x + width, topLeft.y);
-      targetCtx.lineTo(topLeft.x + width, topLeft.y + foldSize);
-      targetCtx.closePath();
-      targetCtx.fill();
+      drawStickyText(targetCtx, note, topLeft, width, height);
+      drawStickyControls(targetCtx, note, topLeft, width, height);
 
-      if (height > 88 * viewport.zoom && width > 110 * viewport.zoom) {
-        targetCtx.strokeStyle = "rgba(23, 32, 51, 0.13)";
-        targetCtx.lineWidth = Math.max(1, viewport.zoom);
-        targetCtx.beginPath();
-        const lineLeft = topLeft.x + 18 * viewport.zoom;
-        const lineRight = topLeft.x + width - 18 * viewport.zoom;
-        for (let i = 0; i < 3; i += 1) {
-          const y = topLeft.y + (46 + i * 28) * viewport.zoom;
-          if (y < topLeft.y + height - 16 * viewport.zoom) {
-            targetCtx.moveTo(lineLeft, y);
-            targetCtx.lineTo(lineRight, y);
-          }
+      targetCtx.restore();
+    }
+
+    function drawStickyText(targetCtx, note, topLeft, width, height) {
+      if (editingStickyId === note.id) return;
+
+      const text = note.text || "";
+      const padding = Math.max(8, 10 * viewport.zoom);
+      const controlsHeight = STICKY_CONTROL_SIZE + STICKY_CONTROL_GAP;
+      const left = topLeft.x + padding;
+      const top = topLeft.y + controlsHeight + padding * 0.45;
+      const maxWidth = width - padding * 2;
+      const maxHeight = height - controlsHeight - padding * 1.6;
+
+      targetCtx.save();
+      targetCtx.fillStyle = "rgba(23, 32, 51, 0.82)";
+      targetCtx.font = Math.max(11, 15 * viewport.zoom) + "px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      targetCtx.textBaseline = "top";
+
+      if (text.trim()) {
+        const lines = wrapText(targetCtx, text, maxWidth);
+        const lineHeight = Math.max(15, 20 * viewport.zoom);
+        for (let i = 0; i < lines.length; i += 1) {
+          const y = top + i * lineHeight;
+          if (y + lineHeight > top + maxHeight) break;
+          targetCtx.fillText(lines[i], left, y);
         }
-        targetCtx.stroke();
+      } else if (note.id === selectedStrokeId) {
+        targetCtx.fillStyle = "rgba(23, 32, 51, 0.34)";
+        targetCtx.fillText("點編輯輸入文字", left, top);
       }
 
       targetCtx.restore();
+    }
+
+    function wrapText(targetCtx, text, maxWidth) {
+      const result = [];
+      const paragraphs = text.split(/\n/);
+
+      for (const paragraph of paragraphs) {
+        let line = "";
+        const chars = Array.from(paragraph);
+        for (const char of chars) {
+          const testLine = line + char;
+          if (line && targetCtx.measureText(testLine).width > maxWidth) {
+            result.push(line);
+            line = char;
+          } else {
+            line = testLine;
+          }
+        }
+        result.push(line);
+      }
+
+      return result;
+    }
+
+    function drawStickyControls(targetCtx, note, topLeft, width, height) {
+      const controls = getStickyControlRects(note);
+
+      for (const control of controls.buttons) {
+        const isConfirm = control.action === "confirm";
+        const isDisabled = isConfirm && editingStickyId !== note.id;
+        targetCtx.save();
+        targetCtx.fillStyle = isDisabled ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.9)";
+        targetCtx.strokeStyle = isDisabled ? "rgba(23, 32, 51, 0.12)" : "rgba(23, 32, 51, 0.24)";
+        targetCtx.lineWidth = 1;
+        targetCtx.beginPath();
+        if (typeof targetCtx.roundRect === "function") {
+          targetCtx.roundRect(control.x, control.y, control.size, control.size, 5);
+        } else {
+          targetCtx.rect(control.x, control.y, control.size, control.size);
+        }
+        targetCtx.fill();
+        targetCtx.stroke();
+        targetCtx.fillStyle = isDisabled ? "rgba(23, 32, 51, 0.3)" : control.color;
+        targetCtx.font = "bold 14px ui-sans-serif, system-ui, sans-serif";
+        targetCtx.textAlign = "center";
+        targetCtx.textBaseline = "middle";
+        targetCtx.fillText(control.label, control.x + control.size / 2, control.y + control.size / 2 + 0.5);
+        targetCtx.restore();
+      }
+
+      targetCtx.save();
+      targetCtx.fillStyle = "rgba(255, 255, 255, 0.58)";
+      targetCtx.strokeStyle = "rgba(23, 32, 51, 0.24)";
+      targetCtx.lineWidth = 1;
+      targetCtx.beginPath();
+      targetCtx.moveTo(topLeft.x + width, topLeft.y + height - STICKY_RESIZE_HANDLE_SIZE);
+      targetCtx.lineTo(topLeft.x + width, topLeft.y + height);
+      targetCtx.lineTo(topLeft.x + width - STICKY_RESIZE_HANDLE_SIZE, topLeft.y + height);
+      targetCtx.closePath();
+      targetCtx.fill();
+      targetCtx.stroke();
+      targetCtx.restore();
+    }
+
+    function getStickyControlRects(note) {
+      const topLeft = worldToScreen(note.x, note.y);
+      const width = note.noteWidth * viewport.zoom;
+      const height = note.noteHeight * viewport.zoom;
+      const size = STICKY_CONTROL_SIZE;
+      const gap = STICKY_CONTROL_GAP;
+      const top = topLeft.y + gap;
+      const right = topLeft.x + width - gap;
+      const actions = [
+        { action: "confirm", label: "✓", color: "#15803d" },
+        { action: "edit", label: "✎", color: "#0f8b8d" },
+        { action: "delete", label: "×", color: "#b42318" }
+      ];
+
+      return {
+        buttons: actions.map((item, index) => ({
+          ...item,
+          x: right - size * (index + 1) - gap * index,
+          y: top,
+          size
+        })),
+        resize: {
+          x: topLeft.x + width - STICKY_RESIZE_HANDLE_SIZE,
+          y: topLeft.y + height - STICKY_RESIZE_HANDLE_SIZE,
+          size: STICKY_RESIZE_HANDLE_SIZE
+        }
+      };
+    }
+
+    function findStickyControlAt(screenPoint) {
+      for (let i = strokes.length - 1; i >= 0; i -= 1) {
+        const note = strokes[i];
+        if (note.type !== "sticky" || !isValidStickyNote(note)) continue;
+
+        const controls = getStickyControlRects(note);
+        for (const button of controls.buttons) {
+          if (isScreenPointInRect(screenPoint, button)) {
+            return {
+              note,
+              index: i,
+              action: button.action
+            };
+          }
+        }
+
+        if (isScreenPointInRect(screenPoint, controls.resize)) {
+          return {
+            note,
+            index: i,
+            action: "resize"
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function isScreenPointInRect(point, rect) {
+      return point.x >= rect.x
+        && point.x <= rect.x + rect.size
+        && point.y >= rect.y
+        && point.y <= rect.y + rect.size;
     }
 
     function drawPreviewShape() {
@@ -789,6 +921,7 @@
       drawPreviewShape();
       drawSelectionBox();
       updateZoomLabel();
+      updateStickyEditorPosition();
     }
 
     function updateZoomLabel() {
@@ -827,8 +960,6 @@
         settings: {
           color: colorPicker.value,
           width: Number(widthSlider.value),
-          stickyWidth: Number(stickyWidthInput.value),
-          stickyHeight: Number(stickyHeightInput.value),
           smoothStrokes
         },
         strokes
@@ -884,14 +1015,6 @@
             widthValue.textContent = widthSlider.value + "px";
           }
 
-          if (Number.isFinite(data.settings.stickyWidth)) {
-            stickyWidthInput.value = String(clamp(data.settings.stickyWidth, MIN_STICKY_SIZE, MAX_STICKY_SIZE));
-          }
-
-          if (Number.isFinite(data.settings.stickyHeight)) {
-            stickyHeightInput.value = String(clamp(data.settings.stickyHeight, MIN_STICKY_SIZE, MAX_STICKY_SIZE));
-          }
-
           if (typeof data.settings.smoothStrokes === "boolean") {
             smoothStrokes = data.settings.smoothStrokes;
             smoothToggleBtn.classList.toggle("active", smoothStrokes);
@@ -943,7 +1066,183 @@
       previewShape = null;
     }
 
+    function addStickyNote() {
+      confirmStickyEdit();
+      const center = screenToWorld(cssWidth() / 2, cssHeight() / 2);
+      const note = {
+        id: newId("sticky"),
+        type: "sticky",
+        color: colorPicker.value,
+        x: center.x - DEFAULT_STICKY_SIZE / 2,
+        y: center.y - DEFAULT_STICKY_SIZE / 2,
+        noteWidth: DEFAULT_STICKY_SIZE,
+        noteHeight: DEFAULT_STICKY_SIZE,
+        text: ""
+      };
+
+      strokes.push(note);
+      selectedStrokeId = note.id;
+      setTool("select");
+      markLayerDirty();
+      pushUndoAction({
+        type: "add",
+        stroke: cloneStroke(note)
+      });
+      requestRedraw();
+      scheduleAutosave();
+      showStatus("已加入 100×100 便條。");
+    }
+
+    function handleStickyControl(event, control) {
+      selectedStrokeId = control.note.id;
+      updateUndoButton();
+
+      if (control.action === "delete") {
+        deleteStrokeAtIndex(control.index, "已刪除便條。");
+        return true;
+      }
+
+      if (control.action === "edit") {
+        startStickyEdit(control.note);
+        return true;
+      }
+
+      if (control.action === "confirm") {
+        if (editingStickyId === control.note.id) {
+          confirmStickyEdit();
+        } else {
+          showStatus("這張便條尚未進入編輯。");
+        }
+        return true;
+      }
+
+      if (control.action === "resize") {
+        beginStickyResize(event, control.note);
+        return true;
+      }
+
+      return false;
+    }
+
+    function startStickyEdit(note) {
+      if (!isValidStickyNote(note)) return;
+      confirmStickyEdit();
+      editingStickyId = note.id;
+      editingStickyOriginal = cloneStroke(note);
+      stickyEditor.value = note.text || "";
+      stickyEditor.style.display = "block";
+      updateStickyEditorPosition();
+      stickyEditor.focus();
+      stickyEditor.select();
+      markLayerDirty();
+      requestRedraw();
+      showStatus("正在編輯便條。");
+    }
+
+    function confirmStickyEdit() {
+      if (!editingStickyId) return;
+
+      const note = findStrokeById(editingStickyId);
+      if (note && note.type === "sticky") {
+        const before = editingStickyOriginal ? cloneStroke(editingStickyOriginal) : cloneStroke(note);
+        note.text = stickyEditor.value;
+        const after = cloneStroke(note);
+        if (JSON.stringify(before) !== JSON.stringify(after)) {
+          pushUndoAction({
+            type: "update",
+            strokeId: note.id,
+            before,
+            after
+          });
+          scheduleAutosave();
+        }
+      }
+
+      editingStickyId = null;
+      editingStickyOriginal = null;
+      stickyEditor.value = "";
+      stickyEditor.style.display = "none";
+      markLayerDirty();
+      requestRedraw();
+    }
+
+    function updateStickyEditorPosition() {
+      if (!editingStickyId) return;
+
+      const note = findStrokeById(editingStickyId);
+      if (!note || note.type !== "sticky") {
+        stickyEditor.style.display = "none";
+        editingStickyId = null;
+        editingStickyOriginal = null;
+        return;
+      }
+
+      const topLeft = worldToScreen(note.x, note.y);
+      const width = note.noteWidth * viewport.zoom;
+      const height = note.noteHeight * viewport.zoom;
+      const padding = Math.max(6, 8 * viewport.zoom);
+      const topOffset = STICKY_CONTROL_SIZE + STICKY_CONTROL_GAP * 2;
+      stickyEditor.style.left = topLeft.x + padding + "px";
+      stickyEditor.style.top = topLeft.y + topOffset + "px";
+      stickyEditor.style.width = Math.max(48, width - padding * 2) + "px";
+      stickyEditor.style.height = Math.max(32, height - topOffset - padding) + "px";
+      stickyEditor.style.backgroundColor = note.color || "#fef08a";
+      stickyEditor.style.fontSize = Math.max(11, 15 * viewport.zoom) + "px";
+    }
+
+    function beginStickyResize(event, note) {
+      if (!isValidStickyNote(note)) return;
+      confirmStickyEdit();
+      stickyResizePointerId = event.pointerId;
+      stickyResizeNoteId = note.id;
+      stickyResizeStartWorld = screenToWorld(getCanvasPoint(event).x, getCanvasPoint(event).y);
+      stickyResizeOriginalNote = cloneStroke(note);
+      stickyResizeChanged = false;
+      cancelDrawing();
+      markLayerDirty();
+      requestRedraw();
+    }
+
+    function continueStickyResize(event) {
+      if (stickyResizePointerId !== event.pointerId || !stickyResizeNoteId || !stickyResizeOriginalNote) return;
+
+      const point = getCanvasPoint(event);
+      const world = screenToWorld(point.x, point.y);
+      const note = findStrokeById(stickyResizeNoteId);
+      if (!note || note.type !== "sticky") return;
+
+      note.noteWidth = clamp(world.x - note.x, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
+      note.noteHeight = clamp(world.y - note.y, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
+      stickyResizeChanged = true;
+      markLayerDirty();
+      requestRedraw();
+    }
+
+    function endStickyResize(event) {
+      if (stickyResizePointerId !== event.pointerId) return;
+
+      const note = stickyResizeNoteId ? findStrokeById(stickyResizeNoteId) : null;
+      if (stickyResizeChanged && note && stickyResizeOriginalNote) {
+        pushUndoAction({
+          type: "update",
+          strokeId: note.id,
+          before: stickyResizeOriginalNote,
+          after: cloneStroke(note)
+        });
+        scheduleAutosave();
+      }
+
+      stickyResizePointerId = null;
+      stickyResizeNoteId = null;
+      stickyResizeStartWorld = null;
+      stickyResizeOriginalNote = null;
+      stickyResizeChanged = false;
+      markLayerDirty();
+      requestRedraw();
+    }
+
     function beginSelection(event, world) {
+      confirmStickyEdit();
       selectionPointerId = event.pointerId;
       selectionStartWorld = world;
       selectionMoved = false;
@@ -953,6 +1252,7 @@
         selectedStrokeId = null;
         selectionOriginalStroke = null;
         updateUndoButton();
+        markLayerDirty();
         requestRedraw();
         return;
       }
@@ -960,6 +1260,7 @@
       selectedStrokeId = hit.stroke.id;
       selectionOriginalStroke = cloneStroke(hit.stroke);
       updateUndoButton();
+      markLayerDirty();
       requestRedraw();
     }
 
@@ -1150,7 +1451,7 @@
         const insertAt = clamp(action.index, 0, strokes.length);
         strokes.splice(insertAt, 0, action.stroke);
         selectedStrokeId = action.stroke.id;
-      } else if (action.type === "move") {
+      } else if (action.type === "move" || action.type === "update") {
         replaceStrokeById(action.strokeId, cloneStroke(action.before));
         selectedStrokeId = action.strokeId;
       } else if (action.type === "clear") {
@@ -1160,6 +1461,11 @@
 
       redoStack.push(action);
       cancelDrawing();
+      if (editingStickyId && !findStrokeById(editingStickyId)) {
+        editingStickyId = null;
+        editingStickyOriginal = null;
+        stickyEditor.style.display = "none";
+      }
       markLayerDirty();
       requestRedraw();
       updateUndoButton();
@@ -1181,7 +1487,20 @@
         return;
       }
 
+      deleteStrokeAtIndex(index, "已刪除所選物件。");
+    }
+
+    function deleteStrokeAtIndex(index, message) {
+      if (index < 0 || index >= strokes.length) return;
+
       const removed = strokes[index];
+      if (editingStickyId === removed.id) {
+        editingStickyId = null;
+        editingStickyOriginal = null;
+        stickyEditor.value = "";
+        stickyEditor.style.display = "none";
+      }
+
       strokes.splice(index, 1);
       pushUndoAction({
         type: "delete",
@@ -1194,7 +1513,9 @@
       requestRedraw();
       updateUndoButton();
       scheduleAutosave();
-      showStatus("已刪除所選物件。");
+      if (message) {
+        showStatus(message);
+      }
     }
 
     function removeStrokeById(id) {
@@ -1212,6 +1533,12 @@
       if (selectedStrokeId === hit.stroke.id) {
         selectedStrokeId = null;
         updateUndoButton();
+      }
+      if (editingStickyId === hit.stroke.id) {
+        editingStickyId = null;
+        editingStickyOriginal = null;
+        stickyEditor.value = "";
+        stickyEditor.style.display = "none";
       }
       erasedStrokeIds.add(hit.stroke.id);
       pushUndoAction({
@@ -1362,6 +1689,7 @@
     }
 
     function beginDrawing(event) {
+      confirmStickyEdit();
       const point = getCanvasPoint(event);
       const world = screenToWorld(point.x, point.y);
       drawingPointerId = event.pointerId;
@@ -1402,21 +1730,6 @@
         requestRedraw();
       }
 
-      if (activeTool === "sticky") {
-        const size = getStickySize();
-        previewShape = {
-          id: newId("sticky"),
-          type: "sticky",
-          color: colorPicker.value,
-          x: world.x,
-          y: world.y,
-          noteWidth: size.width,
-          noteHeight: size.height,
-          start: world,
-          end: world
-        };
-        requestRedraw();
-      }
     }
 
     function continueDrawing(event) {
@@ -1454,53 +1767,9 @@
       }
 
       if (previewShape) {
-        if (previewShape.type === "sticky") {
-          updateStickyPreview(world);
-        } else {
-          previewShape.end = world;
-        }
+        previewShape.end = world;
         requestRedraw();
       }
-    }
-
-    function getStickySize() {
-      const width = clamp(Number(stickyWidthInput.value) || 180, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
-      const height = clamp(Number(stickyHeightInput.value) || 140, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
-      return {
-        width,
-        height
-      };
-    }
-
-    function normalizeStickySizeInputs() {
-      const size = getStickySize();
-      stickyWidthInput.value = String(size.width);
-      stickyHeightInput.value = String(size.height);
-      scheduleAutosave();
-    }
-
-    function updateStickyPreview(world) {
-      if (!previewShape || previewShape.type !== "sticky" || !isValidPoint(previewShape.start)) return;
-
-      const start = previewShape.start;
-      const deltaX = world.x - start.x;
-      const deltaY = world.y - start.y;
-      const dragDistance = Math.hypot(deltaX, deltaY);
-
-      if (dragDistance < MIN_POINT_DISTANCE / viewport.zoom) {
-        const size = getStickySize();
-        previewShape.x = start.x;
-        previewShape.y = start.y;
-        previewShape.noteWidth = size.width;
-        previewShape.noteHeight = size.height;
-        return;
-      }
-
-      previewShape.x = Math.min(start.x, world.x);
-      previewShape.y = Math.min(start.y, world.y);
-      previewShape.noteWidth = Math.max(MIN_STICKY_SIZE, Math.abs(deltaX));
-      previewShape.noteHeight = Math.max(MIN_STICKY_SIZE, Math.abs(deltaY));
-      previewShape.end = world;
     }
 
     function endDrawing(event) {
@@ -1531,6 +1800,7 @@
     }
 
     function beginPan(event) {
+      confirmStickyEdit();
       isPanning = true;
       panPointerId = event.pointerId;
       lastPanPoint = getCanvasPoint(event);
@@ -1614,6 +1884,7 @@
     }
 
     function preventAppGesture(event) {
+      if (isEditingTextInput(event.target)) return;
       if (event.target.closest && event.target.closest("#app")) {
         event.preventDefault();
       }
@@ -1635,6 +1906,11 @@
         return;
       }
 
+      const control = findStickyControlAt(getCanvasPoint(event));
+      if (control && handleStickyControl(event, control)) {
+        return;
+      }
+
       if (event.button === 1 || event.button === 2 || isSpacePressed || activeTool === "pan") {
         beginPan(event);
       } else {
@@ -1649,6 +1925,8 @@
 
       if (activePointers.size >= 2) {
         continuePinch();
+      } else if (stickyResizePointerId === event.pointerId) {
+        continueStickyResize(event);
       } else if (isPanning) {
         continuePan(event);
       } else {
@@ -1664,6 +1942,8 @@
       if (pinchState) {
         cancelDrawing();
         pinchState = null;
+      } else if (stickyResizePointerId === event.pointerId) {
+        endStickyResize(event);
       } else if (isPanning) {
         endPan(event);
       } else {
@@ -1730,11 +2010,16 @@
       showStatus(smoothStrokes ? "筆跡平滑已開啟。" : "筆跡平滑已關閉。");
     });
 
-    stickyWidthInput.addEventListener("change", normalizeStickySizeInputs);
-    stickyHeightInput.addEventListener("change", normalizeStickySizeInputs);
-
+    addStickyBtn.addEventListener("click", addStickyNote);
     undoBtn.addEventListener("click", undoLastAction);
     deleteSelectedBtn.addEventListener("click", deleteSelectedStroke);
+
+    stickyEditor.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.code === "Enter") {
+        event.preventDefault();
+        confirmStickyEdit();
+      }
+    });
 
     clearBtn.addEventListener("click", () => {
       if (confirm("確定要清除整個白板嗎？")) {
@@ -1746,6 +2031,10 @@
         }
         strokes = [];
         selectedStrokeId = null;
+        editingStickyId = null;
+        editingStickyOriginal = null;
+        stickyEditor.value = "";
+        stickyEditor.style.display = "none";
         redoStack = [];
         cancelDrawing();
         markLayerDirty();
@@ -1825,10 +2114,14 @@
     });
 
     window.addEventListener("resize", resizeCanvas);
-    window.addEventListener("pagehide", saveBoardToLocalStorage);
+    window.addEventListener("pagehide", () => {
+      confirmStickyEdit();
+      saveBoardToLocalStorage();
+    });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
+        confirmStickyEdit();
         saveBoardToLocalStorage();
       }
     });
@@ -1872,6 +2165,10 @@
       undoStack = [];
       redoStack = [];
       selectedStrokeId = null;
+      editingStickyId = null;
+      editingStickyOriginal = null;
+      stickyEditor.value = "";
+      stickyEditor.style.display = "none";
       updateUndoButton();
 
       if (data.viewport && Number.isFinite(data.viewport.x) && Number.isFinite(data.viewport.y) && Number.isFinite(data.viewport.zoom)) {
