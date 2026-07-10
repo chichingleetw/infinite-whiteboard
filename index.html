@@ -354,6 +354,8 @@
     const GRID_SIZE = 50;
     const MIN_POINT_DISTANCE = 1.5;
     const STROKE_ERASER_TOLERANCE = 8;
+    const AUTOSAVE_KEY = "infinite-whiteboard.autosave.v1";
+    const AUTOSAVE_DELAY = 250;
     const SHAPE_TOOLS = new Set(["line", "rect", "circle", "ellipse"]);
 
     const viewport = {
@@ -379,6 +381,7 @@
     let lastPanPoint = null;
     let pinchState = null;
     let statusTimer = 0;
+    let autosaveTimer = 0;
     let layerCanvas = document.createElement("canvas");
     let layerCtx = layerCanvas.getContext("2d");
 
@@ -641,6 +644,86 @@
       }
     }
 
+    function getSavedBoardData() {
+      return {
+        version: "1.0",
+        savedAt: new Date().toISOString(),
+        viewport: {
+          x: viewport.x,
+          y: viewport.y,
+          zoom: viewport.zoom
+        },
+        settings: {
+          color: colorPicker.value,
+          width: Number(widthSlider.value),
+          smoothStrokes
+        },
+        strokes
+      };
+    }
+
+    function scheduleAutosave() {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(saveBoardToLocalStorage, AUTOSAVE_DELAY);
+    }
+
+    function saveBoardToLocalStorage() {
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(getSavedBoardData()));
+      } catch (error) {
+        console.warn("無法自動儲存白板。", error);
+      }
+    }
+
+    function loadBoardFromLocalStorage() {
+      let savedText = "";
+      try {
+        savedText = localStorage.getItem(AUTOSAVE_KEY);
+      } catch (error) {
+        console.warn("無法讀取自動儲存白板。", error);
+        return;
+      }
+
+      if (!savedText) return;
+
+      try {
+        const data = JSON.parse(savedText);
+        if (!data || !Array.isArray(data.strokes)) return;
+
+        strokes = data.strokes.filter(isValidStroke).map(cloneStroke);
+        undoStack = [];
+        redoStack = [];
+
+        if (data.viewport && Number.isFinite(data.viewport.x) && Number.isFinite(data.viewport.y) && Number.isFinite(data.viewport.zoom)) {
+          viewport.x = data.viewport.x;
+          viewport.y = data.viewport.y;
+          viewport.zoom = clamp(data.viewport.zoom, MIN_ZOOM, MAX_ZOOM);
+        }
+
+        if (data.settings) {
+          if (typeof data.settings.color === "string" && /^#[0-9a-f]{6}$/i.test(data.settings.color)) {
+            colorPicker.value = data.settings.color;
+          }
+
+          if (Number.isFinite(data.settings.width)) {
+            widthSlider.value = String(clamp(data.settings.width, Number(widthSlider.min), Number(widthSlider.max)));
+            widthValue.textContent = widthSlider.value + "px";
+          }
+
+          if (typeof data.settings.smoothStrokes === "boolean") {
+            smoothStrokes = data.settings.smoothStrokes;
+            smoothToggleBtn.classList.toggle("active", smoothStrokes);
+            smoothToggleBtn.setAttribute("aria-pressed", String(smoothStrokes));
+          }
+        }
+
+        updateUndoButton();
+        updateActiveSwatch();
+      } catch (error) {
+        console.warn("自動儲存資料格式錯誤，已忽略。", error);
+      }
+    }
+
     function distance(a, b) {
       return Math.hypot(a.x - b.x, a.y - b.y);
     }
@@ -653,12 +736,14 @@
       viewport.x += before.x - after.x;
       viewport.y += before.y - after.y;
       redraw();
+      scheduleAutosave();
     }
 
     function panBy(deltaX, deltaY) {
       viewport.x -= deltaX / viewport.zoom;
       viewport.y -= deltaY / viewport.zoom;
       redraw();
+      scheduleAutosave();
     }
 
     function cancelDrawing() {
@@ -695,6 +780,7 @@
         type: "add",
         stroke
       });
+      scheduleAutosave();
     }
 
     function undoLastAction() {
@@ -718,6 +804,7 @@
       cancelDrawing();
       redraw();
       updateUndoButton();
+      scheduleAutosave();
       showStatus("已返回上一步。");
     }
 
@@ -740,6 +827,7 @@
         index: hit.index
       });
       redraw();
+      scheduleAutosave();
       return true;
     }
 
@@ -948,6 +1036,7 @@
 
       cancelDrawing();
       redraw();
+      scheduleAutosave();
     }
 
     function beginPan(event) {
@@ -1123,13 +1212,18 @@
       if (swatch) {
         colorPicker.value = swatch.dataset.color;
         updateActiveSwatch();
+        scheduleAutosave();
       }
     });
 
-    colorPicker.addEventListener("input", updateActiveSwatch);
+    colorPicker.addEventListener("input", () => {
+      updateActiveSwatch();
+      scheduleAutosave();
+    });
 
     widthSlider.addEventListener("input", () => {
       widthValue.textContent = widthSlider.value + "px";
+      scheduleAutosave();
     });
 
     smoothToggleBtn.addEventListener("click", () => {
@@ -1137,6 +1231,7 @@
       smoothToggleBtn.classList.toggle("active", smoothStrokes);
       smoothToggleBtn.setAttribute("aria-pressed", String(smoothStrokes));
       redraw();
+      scheduleAutosave();
       showStatus(smoothStrokes ? "筆跡平滑已開啟。" : "筆跡平滑已關閉。");
     });
 
@@ -1154,6 +1249,7 @@
         redoStack = [];
         cancelDrawing();
         redraw();
+        scheduleAutosave();
         showStatus("白板已清除。");
       }
     });
@@ -1163,6 +1259,7 @@
       viewport.y = 0;
       viewport.zoom = 1;
       redraw();
+      scheduleAutosave();
       showStatus("已回到白板中心。");
     });
 
@@ -1219,6 +1316,13 @@
     });
 
     window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("pagehide", saveBoardToLocalStorage);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        saveBoardToLocalStorage();
+      }
+    });
 
     function isEditingTextInput(target) {
       return target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
@@ -1301,6 +1405,7 @@
       }, 1800);
     }
 
+    loadBoardFromLocalStorage();
     resizeCanvas();
     setTool(activeTool);
     updateActiveSwatch();
