@@ -1,5 +1,7 @@
 # 無邊際白板 Infinite Whiteboard
 
+![無邊際白板 Infinite Whiteboard UI](UI.png)
+
 一個純 HTML、CSS、JavaScript 實作的無邊際白板，可直接部署到 GitHub Pages，也可以直接用瀏覽器開啟 `index.html` 使用。
 
 ## 功能
