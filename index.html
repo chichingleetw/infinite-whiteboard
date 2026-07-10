@@ -213,6 +213,29 @@
       white-space: nowrap;
     }
 
+    .note-size-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 38px;
+      padding: 0 8px;
+      border: 1px solid rgba(38, 56, 79, 0.14);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .note-size-control input {
+      width: 62px;
+      height: 28px;
+      border: 1px solid rgba(38, 56, 79, 0.14);
+      border-radius: 6px;
+      color: var(--ink);
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
     .width-control input {
       width: 108px;
       accent-color: var(--accent);
@@ -274,6 +297,10 @@
         width: 92px;
       }
 
+      .note-size-control input {
+        width: 54px;
+      }
+
       #status {
         bottom: calc(max(10px, env(safe-area-inset-bottom)) + 72px);
       }
@@ -295,6 +322,7 @@
         <button class="icon-button" type="button" data-tool="rect" title="長方形" aria-label="長方形">□</button>
         <button class="icon-button" type="button" data-tool="circle" title="圓形" aria-label="圓形">○</button>
         <button class="icon-button" type="button" data-tool="ellipse" title="橢圓形" aria-label="橢圓形">◯</button>
+        <button class="icon-button" type="button" data-tool="sticky" title="便條貼" aria-label="便條貼">▣</button>
       </div>
 
       <div class="tool-group" aria-label="筆觸設定">
@@ -312,10 +340,17 @@
           <span id="widthValue">4px</span>
         </label>
         <button class="icon-button active" id="smoothToggleBtn" type="button" title="筆跡平滑" aria-label="筆跡平滑" aria-pressed="true">≈</button>
+        <label class="note-size-control" title="便條貼大小">
+          便條
+          <input id="stickyWidthInput" type="number" min="60" max="800" step="10" value="180" aria-label="便條貼寬度">
+          ×
+          <input id="stickyHeightInput" type="number" min="60" max="800" step="10" value="140" aria-label="便條貼高度">
+        </label>
       </div>
 
       <div class="tool-group" aria-label="白板操作">
         <button class="icon-button" id="undoBtn" type="button" title="返回上一步" aria-label="返回上一步" disabled>↶</button>
+        <button class="icon-button danger" id="deleteSelectedBtn" type="button" title="刪除所選" aria-label="刪除所選" disabled>⌦</button>
         <button class="icon-button danger" id="clearBtn" type="button" title="清除白板" aria-label="清除白板">×</button>
         <button class="icon-button" id="resetViewBtn" type="button" title="回到中心" aria-label="回到中心">⌂</button>
         <button class="icon-button" id="exportPngBtn" type="button" title="匯出 PNG" aria-label="匯出 PNG">⇩</button>
@@ -339,9 +374,12 @@
     const colorPicker = document.getElementById("colorPicker");
     const widthSlider = document.getElementById("widthSlider");
     const widthValue = document.getElementById("widthValue");
+    const stickyWidthInput = document.getElementById("stickyWidthInput");
+    const stickyHeightInput = document.getElementById("stickyHeightInput");
     const smoothToggleBtn = document.getElementById("smoothToggleBtn");
     const zoomLabel = document.getElementById("zoomLabel");
     const undoBtn = document.getElementById("undoBtn");
+    const deleteSelectedBtn = document.getElementById("deleteSelectedBtn");
     const clearBtn = document.getElementById("clearBtn");
     const resetViewBtn = document.getElementById("resetViewBtn");
     const exportPngBtn = document.getElementById("exportPngBtn");
@@ -355,6 +393,8 @@
     const GRID_SIZE = 50;
     const MIN_POINT_DISTANCE = 1.5;
     const STROKE_ERASER_TOLERANCE = 8;
+    const MIN_STICKY_SIZE = 60;
+    const MAX_STICKY_SIZE = 800;
     const AUTOSAVE_KEY = "infinite-whiteboard.autosave.v1";
     const AUTOSAVE_DELAY = 250;
     const PINCH_ZOOM_DEADZONE = 0.015;
@@ -554,6 +594,11 @@
         return;
       }
 
+      if (stroke.type === "sticky") {
+        drawStickyNote(targetCtx, stroke);
+        return;
+      }
+
       if (stroke.start && stroke.end) {
         drawShape(targetCtx, stroke);
       }
@@ -628,6 +673,62 @@
       }
 
       targetCtx.stroke();
+      targetCtx.restore();
+    }
+
+    function drawStickyNote(targetCtx, note) {
+      if (!isValidStickyNote(note)) return;
+
+      const topLeft = worldToScreen(note.x, note.y);
+      const width = Math.max(1, note.noteWidth * viewport.zoom);
+      const height = Math.max(1, note.noteHeight * viewport.zoom);
+      const radius = Math.min(8, Math.max(3, 6 * viewport.zoom));
+      const foldSize = Math.min(width, height, Math.max(12, 22 * viewport.zoom));
+
+      targetCtx.save();
+      targetCtx.globalCompositeOperation = "source-over";
+      targetCtx.shadowColor = "rgba(33, 44, 62, 0.18)";
+      targetCtx.shadowBlur = Math.min(18, 10 * viewport.zoom);
+      targetCtx.shadowOffsetY = Math.min(8, 4 * viewport.zoom);
+      targetCtx.fillStyle = note.color || "#fef08a";
+      targetCtx.strokeStyle = "rgba(115, 88, 15, 0.22)";
+      targetCtx.lineWidth = 1;
+      targetCtx.beginPath();
+
+      if (typeof targetCtx.roundRect === "function") {
+        targetCtx.roundRect(topLeft.x, topLeft.y, width, height, radius);
+      } else {
+        targetCtx.rect(topLeft.x, topLeft.y, width, height);
+      }
+
+      targetCtx.fill();
+      targetCtx.shadowColor = "transparent";
+      targetCtx.stroke();
+
+      targetCtx.fillStyle = "rgba(255, 255, 255, 0.28)";
+      targetCtx.beginPath();
+      targetCtx.moveTo(topLeft.x + width - foldSize, topLeft.y);
+      targetCtx.lineTo(topLeft.x + width, topLeft.y);
+      targetCtx.lineTo(topLeft.x + width, topLeft.y + foldSize);
+      targetCtx.closePath();
+      targetCtx.fill();
+
+      if (height > 88 * viewport.zoom && width > 110 * viewport.zoom) {
+        targetCtx.strokeStyle = "rgba(23, 32, 51, 0.13)";
+        targetCtx.lineWidth = Math.max(1, viewport.zoom);
+        targetCtx.beginPath();
+        const lineLeft = topLeft.x + 18 * viewport.zoom;
+        const lineRight = topLeft.x + width - 18 * viewport.zoom;
+        for (let i = 0; i < 3; i += 1) {
+          const y = topLeft.y + (46 + i * 28) * viewport.zoom;
+          if (y < topLeft.y + height - 16 * viewport.zoom) {
+            targetCtx.moveTo(lineLeft, y);
+            targetCtx.lineTo(lineRight, y);
+          }
+        }
+        targetCtx.stroke();
+      }
+
       targetCtx.restore();
     }
 
@@ -726,6 +827,8 @@
         settings: {
           color: colorPicker.value,
           width: Number(widthSlider.value),
+          stickyWidth: Number(stickyWidthInput.value),
+          stickyHeight: Number(stickyHeightInput.value),
           smoothStrokes
         },
         strokes
@@ -779,6 +882,14 @@
           if (Number.isFinite(data.settings.width)) {
             widthSlider.value = String(clamp(data.settings.width, Number(widthSlider.min), Number(widthSlider.max)));
             widthValue.textContent = widthSlider.value + "px";
+          }
+
+          if (Number.isFinite(data.settings.stickyWidth)) {
+            stickyWidthInput.value = String(clamp(data.settings.stickyWidth, MIN_STICKY_SIZE, MAX_STICKY_SIZE));
+          }
+
+          if (Number.isFinite(data.settings.stickyHeight)) {
+            stickyHeightInput.value = String(clamp(data.settings.stickyHeight, MIN_STICKY_SIZE, MAX_STICKY_SIZE));
           }
 
           if (typeof data.settings.smoothStrokes === "boolean") {
@@ -841,12 +952,14 @@
       if (!hit) {
         selectedStrokeId = null;
         selectionOriginalStroke = null;
+        updateUndoButton();
         requestRedraw();
         return;
       }
 
       selectedStrokeId = hit.stroke.id;
       selectionOriginalStroke = cloneStroke(hit.stroke);
+      updateUndoButton();
       requestRedraw();
     }
 
@@ -896,6 +1009,7 @@
 
     function updateUndoButton() {
       undoBtn.disabled = undoStack.length === 0;
+      deleteSelectedBtn.disabled = !selectedStrokeId;
     }
 
     function findStrokeById(id) {
@@ -934,10 +1048,24 @@
         stroke.end.x += deltaX;
         stroke.end.y += deltaY;
       }
+
+      if (stroke.type === "sticky") {
+        stroke.x += deltaX;
+        stroke.y += deltaY;
+      }
     }
 
     function getStrokeBounds(stroke) {
       if (!stroke) return null;
+
+      if (stroke.type === "sticky" && isValidStickyNote(stroke)) {
+        return {
+          minX: stroke.x,
+          minY: stroke.y,
+          maxX: stroke.x + stroke.noteWidth,
+          maxY: stroke.y + stroke.noteHeight
+        };
+      }
 
       const points = [];
       if (stroke.points) points.push(...stroke.points);
@@ -990,6 +1118,12 @@
         return;
       }
 
+      if (stroke.type === "sticky") {
+        if (!isValidStickyNote(stroke)) return;
+        delete stroke.start;
+        delete stroke.end;
+      }
+
       strokes.push(stroke);
       markLayerDirty();
       pushUndoAction({
@@ -1033,6 +1167,36 @@
       showStatus("已返回上一步。");
     }
 
+    function deleteSelectedStroke() {
+      if (!selectedStrokeId) {
+        showStatus("尚未選取任何物件。");
+        return;
+      }
+
+      const index = findStrokeIndexById(selectedStrokeId);
+      if (index < 0) {
+        selectedStrokeId = null;
+        updateUndoButton();
+        requestRedraw();
+        return;
+      }
+
+      const removed = strokes[index];
+      strokes.splice(index, 1);
+      pushUndoAction({
+        type: "delete",
+        stroke: removed,
+        index
+      });
+      selectedStrokeId = null;
+      cancelDrawing();
+      markLayerDirty();
+      requestRedraw();
+      updateUndoButton();
+      scheduleAutosave();
+      showStatus("已刪除所選物件。");
+    }
+
     function removeStrokeById(id) {
       const index = findStrokeIndexById(id);
       if (index >= 0) {
@@ -1047,6 +1211,7 @@
       strokes.splice(hit.index, 1);
       if (selectedStrokeId === hit.stroke.id) {
         selectedStrokeId = null;
+        updateUndoButton();
       }
       erasedStrokeIds.add(hit.stroke.id);
       pushUndoAction({
@@ -1098,7 +1263,19 @@
         return isPointNearEllipse(world, stroke.start, stroke.end, tolerance);
       }
 
+      if (stroke.type === "sticky") {
+        return isPointInStickyNote(world, stroke);
+      }
+
       return false;
+    }
+
+    function isPointInStickyNote(point, note) {
+      return isValidStickyNote(note)
+        && point.x >= note.x
+        && point.x <= note.x + note.noteWidth
+        && point.y >= note.y
+        && point.y <= note.y + note.noteHeight;
     }
 
     function isPointNearPolyline(point, points, tolerance) {
@@ -1224,6 +1401,22 @@
         };
         requestRedraw();
       }
+
+      if (activeTool === "sticky") {
+        const size = getStickySize();
+        previewShape = {
+          id: newId("sticky"),
+          type: "sticky",
+          color: colorPicker.value,
+          x: world.x,
+          y: world.y,
+          noteWidth: size.width,
+          noteHeight: size.height,
+          start: world,
+          end: world
+        };
+        requestRedraw();
+      }
     }
 
     function continueDrawing(event) {
@@ -1261,9 +1454,53 @@
       }
 
       if (previewShape) {
-        previewShape.end = world;
+        if (previewShape.type === "sticky") {
+          updateStickyPreview(world);
+        } else {
+          previewShape.end = world;
+        }
         requestRedraw();
       }
+    }
+
+    function getStickySize() {
+      const width = clamp(Number(stickyWidthInput.value) || 180, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
+      const height = clamp(Number(stickyHeightInput.value) || 140, MIN_STICKY_SIZE, MAX_STICKY_SIZE);
+      return {
+        width,
+        height
+      };
+    }
+
+    function normalizeStickySizeInputs() {
+      const size = getStickySize();
+      stickyWidthInput.value = String(size.width);
+      stickyHeightInput.value = String(size.height);
+      scheduleAutosave();
+    }
+
+    function updateStickyPreview(world) {
+      if (!previewShape || previewShape.type !== "sticky" || !isValidPoint(previewShape.start)) return;
+
+      const start = previewShape.start;
+      const deltaX = world.x - start.x;
+      const deltaY = world.y - start.y;
+      const dragDistance = Math.hypot(deltaX, deltaY);
+
+      if (dragDistance < MIN_POINT_DISTANCE / viewport.zoom) {
+        const size = getStickySize();
+        previewShape.x = start.x;
+        previewShape.y = start.y;
+        previewShape.noteWidth = size.width;
+        previewShape.noteHeight = size.height;
+        return;
+      }
+
+      previewShape.x = Math.min(start.x, world.x);
+      previewShape.y = Math.min(start.y, world.y);
+      previewShape.noteWidth = Math.max(MIN_STICKY_SIZE, Math.abs(deltaX));
+      previewShape.noteHeight = Math.max(MIN_STICKY_SIZE, Math.abs(deltaY));
+      previewShape.end = world;
     }
 
     function endDrawing(event) {
@@ -1493,7 +1730,11 @@
       showStatus(smoothStrokes ? "筆跡平滑已開啟。" : "筆跡平滑已關閉。");
     });
 
+    stickyWidthInput.addEventListener("change", normalizeStickySizeInputs);
+    stickyHeightInput.addEventListener("change", normalizeStickySizeInputs);
+
     undoBtn.addEventListener("click", undoLastAction);
+    deleteSelectedBtn.addEventListener("click", deleteSelectedStroke);
 
     clearBtn.addEventListener("click", () => {
       if (confirm("確定要清除整個白板嗎？")) {
@@ -1509,6 +1750,7 @@
         cancelDrawing();
         markLayerDirty();
         requestRedraw();
+        updateUndoButton();
         scheduleAutosave();
         showStatus("白板已清除。");
       }
@@ -1559,6 +1801,12 @@
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.code === "KeyZ" && !isEditingTextInput(event.target)) {
         event.preventDefault();
         undoLastAction();
+        return;
+      }
+
+      if ((event.code === "Delete" || event.code === "Backspace") && !isEditingTextInput(event.target)) {
+        event.preventDefault();
+        deleteSelectedStroke();
         return;
       }
 
@@ -1653,7 +1901,22 @@
         return isValidPoint(stroke.start) && isValidPoint(stroke.end);
       }
 
+      if (stroke.type === "sticky") {
+        return isValidStickyNote(stroke);
+      }
+
       return false;
+    }
+
+    function isValidStickyNote(note) {
+      return note
+        && Number.isFinite(note.x)
+        && Number.isFinite(note.y)
+        && Number.isFinite(note.noteWidth)
+        && Number.isFinite(note.noteHeight)
+        && note.noteWidth > 0
+        && note.noteHeight > 0
+        && (typeof note.color === "string" || typeof note.color === "undefined");
     }
 
     function cloneStroke(stroke) {
