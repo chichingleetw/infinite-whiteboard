@@ -45,3 +45,7 @@ Infinite Whiteboard 是一款專為教學情境設計的無邊際虛擬白板，
 
 - `index.html`：白板主程式
 - `無邊際白板規格書.md`：開發規格書
+
+## 授權
+
+本專案使用 MIT License 授權。
